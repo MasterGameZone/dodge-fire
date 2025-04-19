@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <!-- Mobile viewport meta tag for proper scaling -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dodge & Fire</title>
+  <style>
+    :root {
+      /* Safe area inset support for iOS devices */
+      --safe-area-bottom: env(safe-area-inset-bottom);
+    }
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #222;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      overflow: hidden;
+      touch-action: none; /* Disable pinch zoom */
+      /* Center the entire content on the screen */
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    /* Container holds the canvas and centers it */
+    #gameContainer {
+      background-color: #333;
+      padding-bottom: var(--safe-area-bottom, 0);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    /* Responsive canvas: width never exceeds height */
+    #gameCanvas {
+      background-color: #333;
+      display: block;
+      /* Canvas dimensions will be set via JavaScript */
+    }
+    .screen {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.9);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      z-index: 2;
+    }
+    .hidden {
+      display: none;
+    }
+    button {
+      padding: 2vh 4vw;
+      margin: 1vh 1vw;
+      font-size: 4vw;
+      cursor: pointer;
+    }
+    #howToPlayText {
+      max-width: 80%;
+      text-align: center;
+      margin-bottom: 20px;
+      font-size: 4vw;
+    }
+    #ad-overlay {
+      height: 290px;
+      width: 300px;
+      position: absolute;
+      background-color: white;
+      margin: auto;
+      display: none;
+      z-index: 99;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      overflow: hidden;
+
+      #close-start-btn {
+        position: absolute;
+        right: -2px;
+        top: -3px;
+        padding: 0;
+        margin: 0;
+        width: 30px;
+      }
+
+      p {
+        color: #000000;
+        font-size: 13px;
+        position: absolute;
+        bottom: -16px;
+        left: 0;
+        padding: 5px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="ad-overlay">
+    <button id="close-start-btn">x</button>
+    <p>Visiting this small ad helps us to grow and update. Thanks for your support! 💖</p>
+    <!-- Adsterra Ads Code -->
+  <script type="text/javascript">
+	atOptions = {
+		'key' : 'd1ab09c01ab2e203e3236993dd511f73',
+		'format' : 'iframe',
+		'height' : 250,
+		'width' : 300,
+		'params' : {}
+	};
+</script>
+<script type="text/javascript" src="//www.highperformanceformat.com/d1ab09c01ab2e203e3236993dd511f73/invoke.js"></script>
+  </div>
+  <!-- Menu Screen -->
+  <div id="menuScreen" class="screen">
+    <h1 style="font-size: 6vw;">Dodge & Fire</h1>
+    <button id="startBtn">Start Game</button>
+    <button id="howToPlayBtn">How to Play</button>
+  </div>
+  
+  <!-- How To Play Screen -->
+  <div id="howToPlayScreen" class="screen hidden">
+    <div id="howToPlayText">
+      <p>Desktop: Use LEFT & RIGHT arrow keys to move and SPACE to fire.</p>
+      <p>Mobile: Slide your finger horizontally to move. Tap (quick touch) with another finger to fire.</p>
+      <p>Enemies fall from the top. Shoot them or avoid them. Score increases over time and enemy speed increases gradually (up to a limit).<br>
+      Also, if you miss 10 enemies (they fall down without being hit), it's game over!</p>
+    </div>
+    <button id="backBtn">Back</button>
+  </div>
+  
+  <!-- Game Over Screen -->
+  <div id="gameOverScreen" class="screen hidden">
+    <h1 style="font-size: 6vw;">Game Over</h1>
+    <p id="finalScore" style="font-size: 5vw;">Score: 0</p>
+    <button id="restartBtn">Restart</button>
+    <button id="backMenuBtn">Home</button>
+  </div>
+  
+  <!-- Game Container -->
+  <div id="gameContainer">
+    <canvas id="gameCanvas"></canvas>
+  </div>
+  
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    // Responsive canvas: adjust dimensions so width is never greater than height (considering safe area)
+    function resizeCanvas() {
+      const computedStyle = getComputedStyle(document.documentElement);
+      const safeAreaBottom = parseInt(computedStyle.getPropertyValue('--safe-area-bottom')) || 0;
+      const availableHeight = window.innerHeight - safeAreaBottom;
+      const availableWidth = window.innerWidth;
+      // Set canvas width to the minimum of availableWidth and availableHeight
+      const desiredWidth = Math.min(availableWidth, availableHeight);
+      canvas.width = desiredWidth;
+      canvas.height = availableHeight;
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    // UI Screens
+    const menuScreen = document.getElementById("menuScreen");
+    const howToPlayScreen = document.getElementById("howToPlayScreen");
+    const gameOverScreen = document.getElementById("gameOverScreen");
+    const finalScoreText = document.getElementById("finalScore");
+
+    // UI Buttons
+    const startBtn = document.getElementById("startBtn");
+    const howToPlayBtn = document.getElementById("howToPlayBtn");
+    const backBtn = document.getElementById("backBtn");
+    const restartBtn = document.getElementById("restartBtn");
+    const backMenuBtn = document.getElementById("backMenuBtn");
+    const adOverlay = document.getElementById('ad-overlay');
+    const closeBtn = document.getElementById('close-start-btn');
+
+    // Game Variables
+    let gameState = "menu"; // menu, playing, gameover
+    let player, enemies, bullets, score;
+    let enemySpawnInterval;
+    let lastTime = 0;
+    let enemySpeedIncrement = 0.001; // slower increment
+    const maxEnemySpeed = 2.3;         // lower maximum speed
+    const maxMissedAllowed = 10;       // 10 missed enemies => game over
+    let missedCount = 0;             // counter for missed enemies
+
+    // Player settings
+    const playerWidth = 40;
+    const playerHeight = 20;
+    const playerSpeed = 5;
+    
+    // Enemy settings
+    const enemyWidth = 30;
+    const enemyHeight = 30;
+    let baseEnemySpeed = 0.5;  // start with lower speed
+
+    // Bullet settings
+    const bulletWidth = 4;
+    const bulletHeight = 10;
+    const bulletSpeed = 7;
+    
+    // Controls: Desktop keyboard
+    const keys = {};
+    document.addEventListener("keydown", (e) => {
+      keys[e.key] = true;
+      if (gameState === "playing" && e.key === " ") {
+        fireBullet();
+      }
+    });
+    document.addEventListener("keyup", (e) => {
+      keys[e.key] = false;
+    });
+
+    // Multi-touch support for mobile:
+    let movementTouchId = null;
+    const touchData = {};
+
+    canvas.addEventListener("touchstart", (e) => {
+      if(gameState !== "playing") return;
+      for (let touch of e.changedTouches) {
+        touchData[touch.identifier] = {
+          startX: touch.clientX,
+          lastX: touch.clientX,
+          startTime: new Date().getTime(),
+          moved: false
+        };
+        if(movementTouchId === null) {
+          movementTouchId = touch.identifier;
+        }
+      }
+    });
+
+    canvas.addEventListener("touchmove", (e) => {
+      if(gameState !== "playing") return;
+      for (let touch of e.changedTouches) {
+        const data = touchData[touch.identifier];
+        if(!data) continue;
+        const deltaX = touch.clientX - data.lastX;
+        if(Math.abs(deltaX) > 2) {
+          data.moved = true;
+        }
+        data.lastX = touch.clientX;
+        if(touch.identifier === movementTouchId) {
+          player.x += deltaX;
+          if(player.x < 0) player.x = 0;
+          if(player.x > canvas.width - player.width) player.x = canvas.width - player.width;
+        }
+      }
+    });
+
+    canvas.addEventListener("touchend", (e) => {
+      if(gameState !== "playing") return;
+      for (let touch of e.changedTouches) {
+        const data = touchData[touch.identifier];
+        if(!data) continue;
+        const touchDuration = new Date().getTime() - data.startTime;
+        if(!data.moved && touchDuration < 200) {
+          fireBullet();
+        }
+        if(touch.identifier === movementTouchId) {
+          movementTouchId = null;
+          const remainingTouches = Object.keys(touchData);
+          if(remainingTouches.length > 1) {
+            for (let id of remainingTouches) {
+              if(parseInt(id) !== touch.identifier) {
+                movementTouchId = parseInt(id);
+                break;
+              }
+            }
+          }
+        }
+        delete touchData[touch.identifier];
+      }
+    });
+    
+    canvas.addEventListener("click", () => {
+      if(gameState === "playing") {
+        fireBullet();
+      }
+    });
+    
+    // UI Button event listeners
+    startBtn.addEventListener("click", startGame);
+    howToPlayBtn.addEventListener("click", () => {
+      menuScreen.classList.add("hidden");
+      howToPlayScreen.classList.remove("hidden");
+    });
+    backBtn.addEventListener("click", () => {
+      howToPlayScreen.classList.add("hidden");
+      menuScreen.classList.remove("hidden");
+    });
+    closeBtn.addEventListener("click", () => {
+      for (let k in keys) { keys[k] = false; }
+      startGame();
+      adOverlay.style.display = 'none';
+    });
+    restartBtn.addEventListener('click', () => {
+      adOverlay.style.display = 'block';
+    });
+    backMenuBtn.addEventListener("click", () => {
+      gameOverScreen.classList.add("hidden");
+      menuScreen.classList.remove("hidden");
+    });
+    
+    // Initialize game objects
+    function initGame() {
+      // Adjust player.y to be above the safe area and virtual buttons.
+      player = {
+        x: canvas.width / 2 - playerWidth / 2,
+        y: canvas.height - playerHeight - 40, // Increased margin to avoid virtual buttons
+        width: playerWidth,
+        height: playerHeight,
+      };
+      enemies = [];
+      bullets = [];
+      score = 0;
+      baseEnemySpeed = 0.5;
+      missedCount = 0;
+      lastTime = performance.now();
+    }
+    
+    function startGame() {
+      gameState = "playing";
+      menuScreen.classList.add("hidden");
+      gameOverScreen.classList.add("hidden");
+      initGame();
+      enemySpawnInterval = setInterval(spawnEnemy, 1000);
+      requestAnimationFrame(gameLoop);
+    }
+    
+    function gameLoop(timestamp) {
+      if(gameState !== "playing") return;
+      const deltaTime = timestamp - lastTime;
+      lastTime = timestamp;
+      
+      update(deltaTime);
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    function update(deltaTime) {
+      score += deltaTime * 0.01;
+      
+      if(keys["ArrowLeft"] && player.x > 0) {
+        player.x -= playerSpeed;
+      }
+      if(keys["ArrowRight"] && player.x < canvas.width - player.width) {
+        player.x += playerSpeed;
+      }
+      
+      bullets = bullets.filter(bullet => {
+        bullet.y -= bulletSpeed;
+        return bullet.y + bullet.height > 0;
+      });
+      
+      enemies = enemies.filter(enemy => {
+        enemy.y += enemy.speed;
+        if(enemy.y > canvas.height) {
+          missedCount++;
+          return false;
+        }
+        return true;
+      });
+      
+      if(baseEnemySpeed < maxEnemySpeed) {
+        baseEnemySpeed += enemySpeedIncrement;
+      }
+      
+      if(missedCount >= maxMissedAllowed) {
+        endGame();
+        return;
+      }
+      
+      bullets.forEach((bullet, bi) => {
+        enemies.forEach((enemy, ei) => {
+          if(rectIntersect(bullet, enemy)) {
+            enemies.splice(ei, 1);
+            bullets.splice(bi, 1);
+          }
+        });
+      });
+      
+      for(let enemy of enemies) {
+        if(rectIntersect(enemy, player)) {
+          endGame();
+          return;
+        }
+      }
+    }
+    
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      ctx.fillStyle = "#0f0";
+      ctx.fillRect(player.x, player.y, player.width, player.height);
+      
+      ctx.fillStyle = "#ff0";
+      bullets.forEach(bullet => {
+        ctx.fillRect(bullet.x, bullet.y, bullet.width, bullet.height);
+      });
+      
+      ctx.fillStyle = "#f00";
+      enemies.forEach(enemy => {
+        ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
+      });
+      
+      ctx.fillStyle = "#fff";
+      ctx.font = "20px Arial";
+      ctx.fillText("Score: " + Math.floor(score), 10, 25);
+      ctx.fillText("Missed: " + missedCount, 10, 50);
+    }
+    
+    function spawnEnemy() {
+      const x = Math.random() * (canvas.width - enemyWidth);
+      enemies.push({
+        x: x,
+        y: -enemyHeight,
+        width: enemyWidth,
+        height: enemyHeight,
+        speed: baseEnemySpeed
+      });
+    }
+    
+    function fireBullet() {
+      bullets.push({
+        x: player.x + player.width / 2 - bulletWidth / 2,
+        y: player.y,
+        width: bulletWidth,
+        height: bulletHeight
+      });
+    }
+    
+    function rectIntersect(a, b) {
+      return a.x < b.x + b.width &&
+             a.x + a.width > b.x &&
+             a.y < b.y + b.height &&
+             a.y + a.height > b.y;
+    }
+    
+    function endGame() {
+      gameState = "gameover";
+      clearInterval(enemySpawnInterval);
+      finalScoreText.textContent = "Score: " + Math.floor(score);
+      gameOverScreen.classList.remove("hidden");
+    }
+  </script>
+</body>
+</html>
